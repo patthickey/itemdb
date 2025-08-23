@@ -287,6 +287,10 @@ const Layout = (props: Props) => {
               label={t('Calculator.pricing-calculator')}
               href="/tools/price-calculator"
             />
+            <DropdownOption
+              label={t('StampCollector.stamp-collector')}
+              href="/tools/stamp-collector"
+            />
           </DropdownButton>
           <DropdownButton bg={props.mainColor} label={t('Layout.contribute')} href="/contribute">
             <DropdownOption label={'Item Data Extractor'} href="/contribute" />

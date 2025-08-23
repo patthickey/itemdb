@@ -1181,6 +1181,10 @@
     "auction-warning": "The maximum initial value for an auction is 100.000.000 NP",
     "auction-helper-text": "So the first bid will need to be at least {x} NP"
   },
+  "StampCollector": {
+    "stamp-collector": "Stamp Collector",
+    "description": "Very Cool!"
+  },
   "OutfitPage": {
     "description": "Find out every exclusive clothes for your {specie} Neopet! Discover rare wearable items to upgrade your wardrobe and customize your {specie} in style.",
     "exclusive-species-clothes": "Exclusive {species} Clothes",
