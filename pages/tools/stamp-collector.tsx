@@ -100,6 +100,24 @@ const StampCollector = (props: Props) => {
   const [isLoading, setLoading] = useState<boolean>(false);
   const [isFiltered, setIsFiltered] = useState<boolean>(false);
 
+  const collectionStatus = useMemo(() => {
+    let total = 0;
+    let released = 0;
+    let owned = 0;
+
+    props.albums.forEach((album) => {
+      released += album.released;
+      total += ALBUM_MAX;
+      owned += album.owned;
+    });
+
+    return {
+      total,
+      released,
+      owned,
+    };
+  }, [props.albums]);
+
   const sortTypes = useMemo(() => {
     return {
       name: 'name',
@@ -115,6 +133,12 @@ const StampCollector = (props: Props) => {
     sortDir: string;
   }>({ sortBy: 'name', sortDir: 'asc' });
 
+  const isReleasedComplete = (stamps: ItemDataWithHidden[]) => stamps.length === 25;
+  const isCollectionComplete = (stamps: ItemDataWithHidden[]) =>
+    stamps.length > 0 && stamps.every((s) => s.isHidden);
+
+  const norm = (v: string) => v.toLowerCase().trim().replace(/\s+/g, '-'); // "In Progress" -> "in-progress"
+
   const handleReleasedFilter = (value: string) => {
     setSelectedReleased(value);
   };
@@ -123,11 +147,9 @@ const StampCollector = (props: Props) => {
     setSelectedCollection(value);
   };
 
-  const isReleasedComplete = (stamps: ItemDataWithHidden[]) => stamps.length === 25;
-  const isCollectionComplete = (stamps: ItemDataWithHidden[]) =>
-    stamps.length > 0 && stamps.every((s) => s.isHidden);
-
-  const norm = (v: string) => v.toLowerCase().trim().replace(/\s+/g, '-'); // "In Progress" -> "in-progress"
+  const handleSortChange = (sortBy: string, sortDir: string) => {
+    setSortInfo({ sortBy, sortDir });
+  };
 
   useEffect(() => {
     const released = norm(selectedReleased); // 'all' | 'complete' | 'in-progress'
@@ -190,10 +212,6 @@ const StampCollector = (props: Props) => {
 
     setFilteredAlbums(next);
   }, [props.albums, selectedReleased, selectedCollection, sortInfo]);
-
-  const handleSortChange = (sortBy: string, sortDir: string) => {
-    setSortInfo({ sortBy, sortDir });
-  };
 
   return (
     <>
@@ -298,7 +316,48 @@ const StampCollector = (props: Props) => {
           </HStack>
         </Flex>
 
-        <Center mt={8} w="100%">
+        <Center mt={4} w="100%">
+          <Box bg="blackAlpha.400" p={3} borderRadius="md" w="100%">
+            <Flex direction={'column'} gap={2} justify={'space-between'}>
+              <Flex direction={'row'} gap={2} justify={'space-between'}>
+                <Text as="span" textColor={'gray.300'} fontSize="sm">
+                  RELEASED
+                </Text>
+                <Text as="span" textColor={'gray.300'} fontSize="sm">
+                  {collectionStatus.released} / {collectionStatus.total} &middot;{' '}
+                  {cleanPercentage(collectionStatus.released, collectionStatus.total)}%
+                </Text>
+              </Flex>
+              <Progress
+                colorScheme="purple"
+                size="lg"
+                borderRadius={'md'}
+                min={0}
+                max={collectionStatus.total}
+                value={collectionStatus.released}
+              />
+              <Flex direction={'row'} gap={2} justify={'space-between'}>
+                <Text as="span" textColor={'gray.300'} fontSize="sm">
+                  COLLECTED
+                </Text>
+                <Text as="span" textColor={'gray.300'} fontSize="sm">
+                  {collectionStatus.owned} / {collectionStatus.released} &middot;{' '}
+                  {cleanPercentage(collectionStatus.owned, collectionStatus.released)}%
+                </Text>
+              </Flex>
+              <Progress
+                colorScheme="cyan"
+                size="lg"
+                borderRadius={'md'}
+                min={0}
+                max={collectionStatus.released}
+                value={collectionStatus.owned}
+              />
+            </Flex>
+          </Box>
+        </Center>
+
+        <Center mt={4} w="100%">
           <SimpleGrid columns={[1, null, 2, 3]} gap={2} w="100%">
             {filteredAlbums.map((album, i) => (
               <AlbumCard
@@ -392,9 +451,11 @@ const AlbumCard = (props: Album) => {
           value={owned.length}
         />
         {owned.length === released && (
-          <Text as="span" textColor={'green.300'} fontSize="md">
-            Collection up to date!
-          </Text>
+          <Box bg="blackAlpha.400" borderRadius={'md'} height="100%" p={2}>
+            <Text as="span" textColor={'green.300'} fontSize="md">
+              Collection up to date!
+            </Text>
+          </Box>
         )}
         {owned.length !== released && <NeededStampsList stamps={props.stamps} owned={owned} />}
       </Flex>
