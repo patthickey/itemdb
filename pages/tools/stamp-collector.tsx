@@ -34,7 +34,7 @@ import { ItemData, ObligatoryUserList, UserList, SearchFilters as SearchFiltersT
 import NextLink from 'next/link';
 
 import { getUserLists } from '../api/v1/lists/[username]';
-import { GetServerSidePropsContext } from 'next';
+import { GetServerSidePropsContext, NextApiRequest } from 'next';
 import { getListItems } from '../api/v1/lists/[username]/[list_id]/itemdata';
 import ItemCard from '@components/Items/ItemCard';
 import NextImage from 'next/image';
@@ -46,6 +46,7 @@ import { BsFilter } from 'react-icons/bs';
 import SearchFilterModal from '@components/Search/SearchFiltersModal';
 import { ChevronDownIcon } from '@chakra-ui/icons';
 import { sortListItems } from '@utils/utils';
+import { CheckAuth } from '@utils/googleCloud';
 
 const ALBUM_MAX = 25;
 const FILTERS = ['Show All', 'Complete', 'In Progress'];
@@ -88,6 +89,7 @@ type Album = {
 
 type Props = {
   albums: Album[];
+  userListFound: boolean;
   messages: any;
   locale: string;
 };
@@ -97,7 +99,7 @@ const StampCollector = (props: Props) => {
   const [filteredAlbums, setFilteredAlbums] = useState<Album[]>(props.albums);
   const [selectedReleased, setSelectedReleased] = useState<string>(FILTERS[0]);
   const [selectedCollection, setSelectedCollection] = useState<string>(FILTERS[0]);
-  const [isLoading, setLoading] = useState<boolean>(false);
+  const [isLoading, setLoading] = useState<boolean>(true);
   const [isFiltered, setIsFiltered] = useState<boolean>(false);
 
   const collectionStatus = useMemo(() => {
@@ -148,6 +150,7 @@ const StampCollector = (props: Props) => {
   };
 
   const handleSortChange = (sortBy: string, sortDir: string) => {
+    setLoading(true);
     setSortInfo({ sortBy, sortDir });
   };
 
@@ -211,6 +214,7 @@ const StampCollector = (props: Props) => {
     }
 
     setFilteredAlbums(next);
+    setLoading(false);
   }, [props.albums, selectedReleased, selectedCollection, sortInfo]);
 
   return (
@@ -257,7 +261,7 @@ const StampCollector = (props: Props) => {
               Released
             </Text>
             <Menu>
-              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} isDisabled={!FILTERS.length}>
+              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} isDisabled={isLoading}>
                 {selectedReleased || FILTERS[0]}
               </MenuButton>
 
@@ -282,7 +286,7 @@ const StampCollector = (props: Props) => {
               Collection
             </Text>
             <Menu>
-              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} isDisabled={!FILTERS.length}>
+              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} isDisabled={isLoading}>
                 {selectedCollection || FILTERS[0]}
               </MenuButton>
 
@@ -494,39 +498,48 @@ const NeededStampsList = (props: NeededStampsList) => {
 };
 
 export async function getServerSideProps(context: GetServerSidePropsContext) {
-  const lists = await getUserLists('official', null, 100);
-  const albums = [];
-  const username = 'patt';
+  const check = await CheckAuth(context.req as NextApiRequest);
+  if (!check.user) throw new Error('User not found');
+  if (!check.user.username) throw new Error('Username not found');
 
-  const allCollectibles = lists.find(
+  const officialLists = await getUserLists('official', null, 100);
+  const albums = [];
+  let userListFound = false;
+
+  const allCollectibles = officialLists.find(
     (list) => list.visibility !== 'public' && list.slug === 'all-collectibles'
   );
 
   if (allCollectibles) {
-    const userLists = await getUserLists(username, null, 100);
+    let preloadMap = null;
+    const userLists = await getUserLists(check.user?.username, null, 100);
     const match = userLists.find((list) => list.linkedListId === allCollectibles.internal_id);
     if (match) {
+      userListFound = true;
       const [preloadData] = await Promise.all([preloadListItems(match, true, 999)]);
-      const preloadMap = new Map(preloadData.items.map((p) => [p.item_iid, p.isHidden]));
-      for (const list of lists) {
-        if (list.visibility === 'public') {
-          const list_id = list.internal_id.toString();
-          if (!list_id) return null;
-          const listItems = await getListItems(list_id, 'official');
-          if (listItems) {
-            albums.push({
-              list,
-              owned: listItems.filter((item) => preloadMap.get(item.internal_id)).length,
-              released: listItems.length,
-              price: listItems.reduce((sum, item) => {
-                return sum + (item.price?.value ?? 0);
-              }, 0),
-              stamps: listItems.map((item) => ({
-                ...item,
-                isHidden: preloadMap.get(item.internal_id) ?? false,
-              })),
-            });
-          }
+      preloadMap = new Map(preloadData.items.map((p) => [p.item_iid, p.isHidden]));
+    }
+
+    for (const list of officialLists) {
+      if (list.visibility === 'public') {
+        const list_id = list.internal_id.toString();
+        if (!list_id) return null;
+        const listItems = await getListItems(list_id, 'official');
+        if (listItems) {
+          albums.push({
+            list,
+            owned: preloadMap
+              ? listItems.filter((item) => preloadMap.get(item.internal_id)).length
+              : 0,
+            released: list.itemCount,
+            price: listItems.reduce((sum, item) => {
+              return sum + (item.price?.value ?? 0);
+            }, 0),
+            stamps: listItems.map((item) => ({
+              ...item,
+              isHidden: (preloadMap && preloadMap.get(item.internal_id)) ?? false,
+            })),
+          });
         }
       }
     }
@@ -537,8 +550,8 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
   return {
     props: {
       albums: albums,
+      userListFound: userListFound,
       messages: await loadTranslation(context.locale as string, 'tools/stamp-collector'),
-
       locale: context.locale,
     },
   };
