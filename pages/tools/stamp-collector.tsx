@@ -4,6 +4,7 @@ import {
   Center,
   Box,
   Flex,
+  Link,
   GridItem,
   Progress,
   Accordion,
@@ -12,15 +13,25 @@ import {
   AccordionIcon,
   AccordionPanel,
   SimpleGrid,
+  Select,
+  useDisclosure,
+  HStack,
+  IconButton,
+  Menu,
+  MenuButton,
+  Button,
+  MenuList,
+  MenuItem,
 } from '@chakra-ui/react';
 import Layout from '../../components/Layout';
 import { createTranslator, useFormatter, useTranslations } from 'next-intl';
-import { ReactElement, useEffect, useMemo } from 'react';
+import { ReactElement, useEffect, useMemo, useState } from 'react';
 import Image from '../../components/Utils/Image';
 import { loadTranslation } from '@utils/load-translation';
 import FeedbackButton from '@components/Feedback/FeedbackButton';
 import axios from 'axios';
-import { ItemData, ObligatoryUserList, UserList } from '@types';
+import { ItemData, ObligatoryUserList, UserList, SearchFilters as SearchFiltersType } from '@types';
+import NextLink from 'next/link';
 
 import { getUserLists } from '../api/v1/lists/[username]';
 import { GetServerSidePropsContext } from 'next';
@@ -30,10 +41,14 @@ import NextImage from 'next/image';
 import NPBag from '../../public/icons/npbag.png';
 import { preloadListItems } from '../api/v1/lists/[username]/[list_id]/items';
 import useSWRImmutable from 'swr/immutable';
+import { SortSelect } from '@components/Input/SortSelect';
+import { BsFilter } from 'react-icons/bs';
+import SearchFilterModal from '@components/Search/SearchFiltersModal';
+import { ChevronDownIcon } from '@chakra-ui/icons';
+import { sortListItems } from '@utils/utils';
 
 const ALBUM_MAX = 25;
-
-const fetcher = (url: string) => axios.get(url).then((res) => res.data as ObligatoryUserList[]);
+const FILTERS = ['Show All', 'Complete', 'In Progress'];
 
 const cleanPercentage = (num: number, max: number) =>
   Math.max(0, Math.min(100, max ? Math.round((num / max) * 100) : 0));
@@ -63,17 +78,122 @@ interface ItemDataWithHidden extends ItemData {
   isHidden: boolean;
 }
 
+type Album = {
+  list: UserList;
+  owned: number;
+  released: number;
+  price: number;
+  stamps: ItemDataWithHidden[];
+};
+
 type Props = {
-  albums: {
-    list: UserList;
-    stamps: ItemDataWithHidden[];
-  }[];
+  albums: Album[];
   messages: any;
   locale: string;
 };
 
 const StampCollector = (props: Props) => {
   const t = useTranslations();
+  const [filteredAlbums, setFilteredAlbums] = useState<Album[]>(props.albums);
+  const [selectedReleased, setSelectedReleased] = useState<string>(FILTERS[0]);
+  const [selectedCollection, setSelectedCollection] = useState<string>(FILTERS[0]);
+  const [isLoading, setLoading] = useState<boolean>(false);
+  const [isFiltered, setIsFiltered] = useState<boolean>(false);
+
+  const sortTypes = useMemo(() => {
+    return {
+      name: 'name',
+      price: 'price',
+      released: 'released',
+      collected: 'collected',
+      quantity: 'quantity',
+    };
+  }, []);
+
+  const [sortInfo, setSortInfo] = useState<{
+    sortBy: string;
+    sortDir: string;
+  }>({ sortBy: 'name', sortDir: 'asc' });
+
+  const handleReleasedFilter = (value: string) => {
+    setSelectedReleased(value);
+  };
+
+  const handleCollectionFilter = (value: string) => {
+    setSelectedCollection(value);
+  };
+
+  const isReleasedComplete = (stamps: ItemDataWithHidden[]) => stamps.length === 25;
+  const isCollectionComplete = (stamps: ItemDataWithHidden[]) =>
+    stamps.length > 0 && stamps.every((s) => s.isHidden);
+
+  const norm = (v: string) => v.toLowerCase().trim().replace(/\s+/g, '-'); // "In Progress" -> "in-progress"
+
+  useEffect(() => {
+    const released = norm(selectedReleased); // 'all' | 'complete' | 'in-progress'
+    const collection = norm(selectedCollection); // same
+
+    const next = props.albums.filter((a) => {
+      const releasedComplete = isReleasedComplete(a.stamps);
+      const collectionComplete = isCollectionComplete(a.stamps);
+
+      const releasedPass =
+        released === 'show-all'
+          ? true
+          : released === 'complete'
+            ? releasedComplete
+            : !releasedComplete; // "in-progress"
+
+      const collectionPass =
+        collection === 'show-all'
+          ? true
+          : collection === 'complete'
+            ? collectionComplete
+            : !collectionComplete; // "in-progress"
+
+      return releasedPass && collectionPass;
+    });
+
+    const { sortBy, sortDir } = sortInfo;
+
+    if (sortBy === 'name') {
+      if (sortDir === 'asc') {
+        next.sort((a, b) => a.list.name.localeCompare(b.list.name));
+      } else {
+        next.sort((a, b) => b.list.name.localeCompare(a.list.name));
+      }
+    } else if (sortBy === 'price') {
+      if (sortDir === 'asc') {
+        next.sort((a, b) => (a.price ?? Infinity) - (b.price ?? Infinity));
+      } else {
+        next.sort((a, b) => (b.price ?? Infinity) - (a.price ?? Infinity));
+      }
+    } else if (sortBy === 'released') {
+      if (sortDir === 'asc') {
+        next.sort((a, b) => a.released / ALBUM_MAX - b.released / ALBUM_MAX);
+      } else {
+        next.sort((a, b) => b.released / ALBUM_MAX - a.released / ALBUM_MAX);
+      }
+    } else if (sortBy === 'collected') {
+      if (sortDir === 'asc') {
+        next.sort((a, b) => a.owned / a.released - b.owned / b.released);
+      } else {
+        next.sort((a, b) => b.owned / b.released - a.owned / a.released);
+      }
+    } else if (sortBy === 'quantity') {
+      if (sortDir === 'asc') {
+        next.sort((a, b) => a.released - a.owned - (b.released - b.owned));
+      } else {
+        next.sort((a, b) => b.released - b.owned - (a.released - a.owned));
+      }
+    }
+
+    setFilteredAlbums(next);
+  }, [props.albums, selectedReleased, selectedCollection, sortInfo]);
+
+  const handleSortChange = (sortBy: string, sortDir: string) => {
+    setSortInfo({ sortBy, sortDir });
+  };
 
   return (
     <>
@@ -102,10 +222,93 @@ const StampCollector = (props: Props) => {
         <Text maxW={'700px'} textAlign={'center'} fontSize={'sm'} sx={{ textWrap: 'pretty' }}>
           {t('StampCollector.description')}
         </Text>
+
+        <Flex
+          justifyContent={'space-between'}
+          alignItems="center"
+          gap={3}
+          flexFlow={{ base: 'column-reverse', lg: 'row' }}
+        >
+          <HStack>
+            <Text
+              flex="0 0 auto"
+              textColor={'gray.300'}
+              fontSize="sm"
+              display={{ base: 'none', md: 'inherit' }}
+            >
+              Released
+            </Text>
+            <Menu>
+              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} isDisabled={!FILTERS.length}>
+                {selectedReleased || FILTERS[0]}
+              </MenuButton>
+
+              <MenuList>
+                {FILTERS.map((stat) => (
+                  <MenuItem
+                    key={stat}
+                    value={stat.toLowerCase()}
+                    onClick={(e) => handleReleasedFilter(stat)}
+                  >
+                    {stat}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </Menu>
+            <Text
+              flex="0 0 auto"
+              textColor={'gray.300'}
+              fontSize="sm"
+              display={{ base: 'none', md: 'inherit' }}
+            >
+              Collection
+            </Text>
+            <Menu>
+              <MenuButton as={Button} rightIcon={<ChevronDownIcon />} isDisabled={!FILTERS.length}>
+                {selectedCollection || FILTERS[0]}
+              </MenuButton>
+
+              <MenuList>
+                {FILTERS.map((stat) => (
+                  <MenuItem
+                    key={stat}
+                    value={stat.toLowerCase()}
+                    onClick={(e) => handleCollectionFilter(stat)}
+                  >
+                    {stat}
+                  </MenuItem>
+                ))}
+              </MenuList>
+            </Menu>
+            <Text
+              flex="0 0 auto"
+              textColor={'gray.300'}
+              fontSize="sm"
+              display={{ base: 'none', md: 'inherit' }}
+            >
+              {t('General.sort-by')}
+            </Text>
+            <SortSelect
+              sortTypes={sortTypes}
+              sortBy={sortInfo.sortBy}
+              onClick={handleSortChange}
+              sortDir={sortInfo.sortDir as 'asc' | 'desc'}
+              disabled={isLoading}
+            />
+          </HStack>
+        </Flex>
+
         <Center mt={8} w="100%">
           <SimpleGrid columns={[1, null, 2, 3]} gap={2} w="100%">
-            {props.albums.map((album, i) => (
-              <AlbumCard key={i} list={album.list} stamps={album.stamps} />
+            {filteredAlbums.map((album, i) => (
+              <AlbumCard
+                key={i}
+                list={album.list}
+                stamps={album.stamps}
+                price={album.price}
+                released={album.released}
+                owned={album.owned}
+              />
             ))}
           </SimpleGrid>
         </Center>
@@ -117,36 +320,31 @@ const StampCollector = (props: Props) => {
 
 export default StampCollector;
 
-type AlbumCardProps = {
-  list: UserList;
-  stamps: ItemDataWithHidden[];
-};
-
-const AlbumCard = (props: AlbumCardProps) => {
+const AlbumCard = (props: Album) => {
   const t = useTranslations();
   const format = useFormatter();
-  const { list, stamps } = props;
-  const released = stamps.length;
+  const { list, stamps, price, released } = props;
   const owned = stamps.filter((stamp) => stamp.isHidden === true);
-
-  const NPPrice = useMemo(() => {
-    if (!stamps) return 0;
-    return stamps.reduce((sum, item) => {
-      return sum + (item.price?.value ?? 0);
-    }, 0);
-  }, [stamps]);
 
   return (
     <GridItem bg="blackAlpha.400" p={3} borderRadius={'md'}>
       <Flex direction={'column'} gap={2} justify={'space-between'}>
-        <Text as="div" textColor={'gray.300'} fontSize="lg" textAlign="left">
-          {list.name.replace('Stamp Album -', '')}
-        </Text>
+        <Link
+          as={NextLink}
+          href={`/lists/${list.official ? 'official' : list.owner.username}/${
+            list.slug ?? list.internal_id
+          }`}
+          _hover={{ textDecoration: 'none' }}
+        >
+          <Text as="div" textColor={'gray.300'} fontSize="lg" textAlign="left">
+            {list.name.replace('Stamp Album -', '')}
+          </Text>
+        </Link>
         <Text as="div" textColor={'gray.300'} fontSize="sm" textAlign="left">
           {t('Lists.this-list-costs-aprox')}{' '}
-          {!!NPPrice && (
+          {!!price && (
             <>
-              <b>{format.number(NPPrice)} NP</b>
+              <b>{format.number(price)} NP</b>
               <Image
                 as={NextImage}
                 display="inline"
@@ -163,10 +361,10 @@ const AlbumCard = (props: AlbumCardProps) => {
         </Text>
         <Flex direction={'row'} gap={2} justify={'space-between'}>
           <Text as="span" textColor={'gray.300'} fontSize="sm">
-            STATUS
+            RELEASED
           </Text>
           <Text as="span" textColor={'gray.300'} fontSize="sm">
-            {released} / {ALBUM_MAX} released &middot; {cleanPercentage(released, ALBUM_MAX)}%
+            {released} / {ALBUM_MAX} &middot; {cleanPercentage(released, ALBUM_MAX)}%
           </Text>
         </Flex>
         <Progress
@@ -179,11 +377,10 @@ const AlbumCard = (props: AlbumCardProps) => {
         />
         <Flex direction={'row'} gap={2} justify={'space-between'}>
           <Text as="span" textColor={'gray.300'} fontSize="sm">
-            COLLECTION
+            COLLECTED
           </Text>
           <Text as="span" textColor={'gray.300'} fontSize="sm">
-            {owned.length} / {released} collected &middot; {cleanPercentage(owned.length, released)}
-            %
+            {owned.length} / {released} &middot; {cleanPercentage(owned.length, released)}%
           </Text>
         </Flex>
         <Progress
@@ -191,7 +388,7 @@ const AlbumCard = (props: AlbumCardProps) => {
           size="lg"
           borderRadius={'md'}
           min={0}
-          max={ALBUM_MAX}
+          max={released}
           value={owned.length}
         />
         {owned.length === released && (
@@ -258,6 +455,11 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
           if (listItems) {
             albums.push({
               list,
+              owned: listItems.filter((item) => preloadMap.get(item.internal_id)).length,
+              released: listItems.length,
+              price: listItems.reduce((sum, item) => {
+                return sum + (item.price?.value ?? 0);
+              }, 0),
               stamps: listItems.map((item) => ({
                 ...item,
                 isHidden: preloadMap.get(item.internal_id) ?? false,
@@ -275,6 +477,7 @@ export async function getServerSideProps(context: GetServerSidePropsContext) {
     props: {
       albums: albums,
       messages: await loadTranslation(context.locale as string, 'tools/stamp-collector'),
+
       locale: context.locale,
     },
   };
